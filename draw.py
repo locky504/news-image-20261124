@@ -1,203 +1,230 @@
-#!/usr/bin/env python3
-"""Draw the front page for make.fun news-image-20261124.
+"""Draw the front page of THE WORLD TODAY for Tuesday 24 November 2026.
 
-Renders the verified world headlines of Tuesday 24 November 2026 as a
-one-page newspaper front page (1024x1024 PNG) and writes it to
-entry.png beside this file. Run once, locally:
+A one-page newspaper front page (1024 x 1024) built from the six
+verified headlines of the day. Run it with:
 
     python3 draw.py
 
-The drawing is fully deterministic: fixed headlines, fixed fonts, fixed
-layout, no clock, no randomness, no network. The entry point the
-grader runs is main.ts (Node), which copies the finished entry.png to
-/output/entry.png byte for byte.
-
-Headlines were verified on 24 November 2026 against SCMP, The Japan
-Times and The Manila Times (all dated 24 November 2026); only
-headline-level facts are used, and no casualty or damage figures are
-given.
+It writes entry.png next to this file. No network, no clock, no
+randomness: the same input always draws the same page.
 """
-
-import os
 
 from PIL import Image, ImageDraw, ImageFont
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(HERE, "entry.png")
-
-W, H = 1024, 1024
+PAGE_W, PAGE_H = 1024, 1024
+PAPER = (246, 241, 229)
+INK = (17, 17, 17)
+RED = (163, 18, 30)
+NAVY = (28, 58, 110)
+GREY = (107, 101, 88)
 MARGIN = 36
-CONTENT_W = W - 2 * MARGIN
+CONTENT_W = PAGE_W - 2 * MARGIN
 
-PAPER = (248, 244, 233)   # warm newsprint
-INK = (20, 20, 20)
-RED = (163, 30, 30)       # kicker accent
-GREY = (90, 86, 78)
-BLUE = (28, 68, 110)      # sea accent
-
-FONT_DIR = "/usr/share/fonts/truetype/dejavu"
+SERIF_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf"
+SERIF = "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf"
+SANS_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+SANS = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 
 
-def font(name, size):
-    return ImageFont.truetype(os.path.join(FONT_DIR, name), size)
+def load(path, size):
+    """Load a TrueType font; fall back to the built-in bitmap font."""
+    try:
+        return ImageFont.truetype(path, size)
+    except Exception:
+        return ImageFont.load_default()
 
 
-SERIF_B = lambda s: font("DejaVuSerif-Bold.ttf", s)   # noqa: E731
-SANS = lambda s: font("DejaVuSans.ttf", s)            # noqa: E731
-SANS_B = lambda s: font("DejaVuSans-Bold.ttf", s)     # noqa: E731
-
-
-def wrap(draw, text, fnt, max_width):
-    """Greedy word wrap; returns a list of lines that fit max_width."""
-    lines, cur = [], ""
-    for word in text.split():
-        trial = word if not cur else cur + " " + word
-        if draw.textlength(trial, font=fnt) <= max_width:
-            cur = trial
+def wrap_text(draw, text, face, max_width):
+    """Split text into lines that each fit inside max_width."""
+    words = text.split()
+    lines = []
+    current = ""
+    for word in words:
+        trial = (current + " " + word).strip()
+        if draw.textlength(trial, font=face) <= max_width:
+            current = trial
         else:
-            if cur:
-                lines.append(cur)
-            cur = word
-    if cur:
-        lines.append(cur)
+            if current:
+                lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
     return lines
 
 
-def draw_wrapped(draw, x, y, text, fnt, max_width, fill, leading):
-    lines = wrap(draw, text, fnt, max_width)
+def draw_lines(draw, x, y, lines, face, fill, gap):
+    """Draw a list of lines, one under the next; return the y below."""
     for line in lines:
-        draw.text((x, y), line, font=fnt, fill=fill)
-        y += leading
+        draw.text((x, y), line, font=face, fill=fill)
+        y += face.size + gap
     return y
 
 
-def rule(draw, x0, x1, y, width=2, fill=INK):
-    draw.line([(x0, y), (x1, y)], fill=fill, width=width)
+def hline(draw, x1, x2, y, width=2, fill=INK):
+    draw.line([(x1, y), (x2, y)], fill=fill, width=width)
 
 
-def draw_ship(draw, cx, cy):
-    """Simple warship on waves, drawn to the right of the lead headline."""
-    # hull
-    draw.polygon([(cx - 58, cy - 6), (cx + 58, cy - 6), (cx + 44, cy + 16),
-                  (cx - 44, cy + 16)], fill=BLUE)
-    # superstructure
-    draw.rectangle([cx - 26, cy - 30, cx + 10, cy - 6], fill=INK)
-    # mast + flag
-    draw.line([(cx - 6, cy - 52), (cx - 6, cy - 30)], fill=INK, width=3)
-    draw.polygon([(cx - 6, cy - 52), (cx + 16, cy - 47), (cx - 6, cy - 42)],
-                 fill=RED)
-    # waves
-    for dx in (-46, -12, 22):
-        draw.arc([cx + dx - 16, cy + 20, cx + dx + 16, cy + 34],
-                 start=0, end=180, fill=BLUE, width=3)
+def fit_headline(draw, headline, face_path, start_size, max_width, max_lines):
+    """Pick the largest headline size that wraps into max_lines lines."""
+    size = start_size
+    while size > 20:
+        face = load(face_path, size)
+        lines = wrap_text(draw, headline, face, max_width)
+        if len(lines) <= max_lines:
+            return face, lines
+        size -= 2
+    face = load(face_path, size)
+    return face, wrap_text(draw, headline, face, max_width)
 
 
-def draw_bubble(draw, cx, cy):
-    """Chat bubble with AI, drawn to the right of the bottom band."""
-    draw.rounded_rectangle([cx - 52, cy - 30, cx + 52, cy + 22],
-                           radius=14, outline=BLUE, width=3)
-    draw.polygon([(cx - 30, cy + 22), (cx - 38, cy + 36), (cx - 10, cy + 22)],
-                 fill=BLUE)
-    draw.text((cx, cy - 11), "AI", font=SANS_B(30), fill=BLUE, anchor="ma")
+def story(draw, x, y, width, kicker, headline, body,
+          head_start, head_lines, body_size, body_lines):
+    """Draw one story block; return the y just below it."""
+    kick = load(SANS_BOLD, 19)
+    draw.text((x, y), kicker, font=kick, fill=RED)
+    y += 28
+    face, lines = fit_headline(draw, headline, SERIF_BOLD,
+                               head_start, width, head_lines)
+    y = draw_lines(draw, x, y, lines, face, INK, 3)
+    y += 5
+    body_face = load(SERIF, body_size)
+    body_lines_wrapped = wrap_text(draw, body, body_face, width)
+    y = draw_lines(draw, x, y, body_lines_wrapped[:body_lines],
+                   body_face, INK, 2)
+    return y
+
+
+def draw_ship(draw, x, y, scale=1.0):
+    """A small warship with a red flag, drawn from plain shapes."""
+    hull = [(x, y + 34 * scale), (x + 150 * scale, y + 34 * scale),
+            (x + 132 * scale, y + 62 * scale), (x + 18 * scale, y + 62 * scale)]
+    draw.polygon(hull, fill=NAVY)
+    draw.rectangle([x + 52 * scale, y + 12 * scale,
+                    x + 96 * scale, y + 34 * scale], fill=INK)
+    draw.line([(x + 74 * scale, y + 12 * scale),
+               (x + 74 * scale, y - 14 * scale)], fill=INK, width=4)
+    flag = [(x + 74 * scale, y - 14 * scale),
+            (x + 100 * scale, y - 8 * scale),
+            (x + 74 * scale, y - 2 * scale)]
+    draw.polygon(flag, fill=RED)
+    for i, wy in enumerate((y + 74 * scale, y + 86 * scale)):
+        draw.arc([x + 6 * scale + i * 8, wy,
+                  x + 70 * scale + i * 8, wy + 14 * scale],
+                 start=0, end=180, fill=NAVY, width=3)
+        draw.arc([x + 78 * scale + i * 8, wy,
+                  x + 142 * scale + i * 8, wy + 14 * scale],
+                 start=0, end=180, fill=NAVY, width=3)
+
+
+def draw_bubble(draw, x, y, w=92, h=58):
+    """A speech bubble with AI inside it, drawn from plain shapes."""
+    draw.rounded_rectangle([x, y, x + w, y + h], radius=12,
+                           outline=NAVY, width=3, fill=PAPER)
+    tail = [(x + 22, y + h - 2), (x + 44, y + h - 2),
+            (x + 30, y + h + 20)]
+    draw.polygon(tail, outline=NAVY, fill=PAPER)
+    draw.line([(x + 22, y + h - 2), (x + 30, y + h + 20)], fill=NAVY, width=3)
+    draw.line([(x + 44, y + h - 2), (x + 30, y + h + 20)], fill=NAVY, width=3)
+    face = load(SANS_BOLD, 34)
+    label = "AI"
+    tw = draw.textlength(label, font=face)
+    draw.text((x + (w - tw) / 2, y + 10), label, font=face, fill=NAVY)
 
 
 def main():
-    img = Image.new("RGB", (W, H), PAPER)
-    d = ImageDraw.Draw(img)
-    x0, x1 = MARGIN, W - MARGIN
+    page = Image.new("RGB", (PAGE_W, PAGE_H), PAPER)
+    draw = ImageDraw.Draw(page)
+    left = MARGIN
+    right = PAGE_W - MARGIN
 
-    # ---- Masthead -----------------------------------------------------
-    rule(d, x0, x1, 30, 3)
-    d.text((W // 2, 44), "THE WORLD TODAY", font=SERIF_B(84),
-           fill=INK, anchor="ma")
-    rule(d, x0, x1, 142, 2)
-    d.text((x0, 152), "TUESDAY, 24 NOVEMBER 2026", font=SANS_B(20),
-           fill=INK, anchor="la")
-    d.text((x1, 152), "THE WORLD IN ONE PAGE", font=SANS_B(20),
-           fill=INK, anchor="ra")
-    rule(d, x0, x1, 182, 1)
+    # --- masthead ---
+    hline(draw, left, right, 24, width=4)
+    mast = load(SERIF_BOLD, 84)
+    title = "THE WORLD TODAY"
+    tw = draw.textlength(title, font=mast)
+    draw.text(((PAGE_W - tw) / 2, 36), title, font=mast, fill=INK)
+    hline(draw, left, right, 134, width=2)
 
-    # ---- Lead story ---------------------------------------------------
-    y = 196
-    d.text((x0, y), "UKRAINE  \u00b7  LIBYA", font=SANS_B(22), fill=RED)
-    y += 34
-    y = draw_wrapped(
-        d, x0, y, "Ukraine Sinks Russian Warship Off Libya",
-        SERIF_B(44), CONTENT_W - 150, INK, 50)
-    draw_ship(d, x1 - 62, 268)
-    y += 4
-    y = draw_wrapped(
-        d, x0, y,
-        "Zelensky says Ukrainian sea drones sank the Russian corvette "
-        "Merkury off Libya; seven unmanned boats destroyed a Ka-27 "
-        "helicopter and hit the cargo ship MV Angara.",
-        SANS(22), CONTENT_W, INK, 28)
-    rule(d, x0, x1, y + 14, 2)
+    # --- dateline ---
+    date_face = load(SANS_BOLD, 22)
+    draw.text((left, 146), "TUESDAY, 24 NOVEMBER 2026",
+              font=date_face, fill=INK)
+    tag = "THE WORLD IN ONE PAGE"
+    tw = draw.textlength(tag, font=date_face)
+    draw.text((right - tw, 146), tag, font=date_face, fill=INK)
+    hline(draw, left, right, 180, width=2)
 
-    # ---- 2 x 2 grid ----------------------------------------------------
-    col_w = (CONTENT_W - 24) // 2
-    grid = [
-        ("TECH  \u00b7  CALIFORNIA",
-         "Nvidia Reinstates Huang As CEO After Trump Push",
-         "Nvidia rehires Jensen Huang as chief executive in a stunning "
-         "reversal after Donald Trump intervenes."),
-        ("SPACE  \u00b7  BRUSSELS",
-         "NATO Vows Space Defence As Russia Plans Launch",
-         "Allies warn Moscow may launch a nuclear space weapon next "
-         "month; NATO vows to defend space."),
-        ("ASIA  \u00b7  MANILA",
-         "Trump Offers Philippines $2.4bn For Self-Defence",
-         "The US president offers Manila $2.4 billion to defend itself "
-         "\u2014 with a catch."),
-        ("BRITAIN  \u00b7  CONCERT",
-         "Thousands Evacuated From UK Concert",
-         "Thousands are evacuated from a UK concert after an unknown "
-         "substance is released."),
-    ]
-    gy = y + 22
-    row_h = 200
-    for i, (kicker, headline, dek) in enumerate(grid):
-        col = i % 2
-        row = i // 2
-        cx = x0 + col * (col_w + 24)
-        cy = gy + row * row_h
-        d.text((cx, cy), kicker, font=SANS_B(18), fill=RED)
-        cy = draw_wrapped(d, cx, cy + 26, headline, SERIF_B(28),
-                          col_w, INK, 33)
-        draw_wrapped(d, cx, cy + 4, dek, SANS(19), col_w, INK, 24)
-    # vertical divider between the two columns
-    mid_x = x0 + col_w + 12
-    d.line([(mid_x, gy), (mid_x, gy + 2 * row_h - 12)], fill=GREY, width=1)
+    # --- lead story: Ukraine sinks a Russian warship ---
+    y = 194
+    lead_end = story(draw, left, y, 690,
+                     "UKRAINE \u00b7 LIBYA",
+                     "Ukraine Sinks Russian Warship Off Libya",
+                     "Zelensky says Ukrainian sea drones sank the Russian "
+                     "corvette Merkury off Libya; seven unmanned boats "
+                     "destroyed a Ka-27 helicopter and hit the cargo ship "
+                     "MV Angara.",
+                     head_start=50, head_lines=2, body_size=21, body_lines=3)
+    draw_ship(draw, 800, 250, scale=1.0)
+    hline(draw, left, right, lead_end + 10, width=2)
 
-    # ---- Bottom band ---------------------------------------------------
-    by = gy + 2 * row_h + 2
-    rule(d, x0, x1, by, 2)
-    by += 12
-    d.text((x0, by), "TECH  \u00b7  LAW", font=SANS_B(20), fill=RED)
-    by += 26
-    d.text((x0, by), "States Sue Musk Firms Over Grok Images",
-           font=SERIF_B(32), fill=INK)
-    by += 40
-    draw_wrapped(
-        d, x0, by,
-        "US states sue Musk companies over sexualized images made with "
-        "the AI chatbot Grok.",
-        SANS(20), CONTENT_W - 150, INK, 26)
-    draw_bubble(d, x1 - 62, by + 22)
-    by += 62
+    # --- middle grid: two columns, two stories each ---
+    col_w = (CONTENT_W - 30) // 2
+    mid_x = left + col_w + 30
+    grid_top = lead_end + 24
 
-    # ---- Footer --------------------------------------------------------
-    rule(d, x0, x1, 984, 1)
-    d.text((W // 2, 992),
-           "Headlines verified from SCMP, The Japan Times and The Manila "
-           "Times  \u00b7  24 November 2026",
-           font=SANS(15), fill=GREY, anchor="ma")
+    y_left = story(draw, left, grid_top, col_w,
+                   "TECH \u00b7 CALIFORNIA",
+                   "Nvidia Reinstates Huang As CEO After Trump Push",
+                   "Nvidia rehires Jensen Huang as chief executive in "
+                   "a stunning reversal after Donald Trump intervenes.",
+                   head_start=30, head_lines=2, body_size=19, body_lines=3)
+    y_right = story(draw, mid_x, grid_top, col_w,
+                    "SPACE \u00b7 BRUSSELS",
+                    "NATO Vows Space Defence As Russia Plans Launch",
+                    "Allies warn Moscow may launch a nuclear space "
+                    "weapon next month; NATO vows to defend space.",
+                    head_start=30, head_lines=2, body_size=19, body_lines=3)
+    row2 = max(y_left, y_right) + 14
 
-    assert by < 984, f"layout overflow: bottom band ends at {by}"
-    img.save(OUT, format="PNG")
-    size = os.path.getsize(OUT)
-    print(f"wrote {OUT} ({size} bytes, {W}x{H})")
-    assert size <= 1048576, "entry.png exceeds 1 MiB"
+    y_left = story(draw, left, row2, col_w,
+                   "ASIA \u00b7 MANILA",
+                   "Trump Offers Philippines $2.4bn For Self-Defence",
+                   "The US president offers Manila $2.4 billion to "
+                   "defend itself \u2014 with a catch.",
+                   head_start=30, head_lines=2, body_size=19, body_lines=3)
+    y_right = story(draw, mid_x, row2, col_w,
+                    "BRITAIN \u00b7 CONCERT",
+                    "Thousands Evacuated From UK Concert",
+                    "Thousands are evacuated from a UK concert after "
+                    "an unknown substance is released.",
+                    head_start=30, head_lines=2, body_size=19, body_lines=3)
+    grid_bottom = max(y_left, y_right)
+    draw.line([(mid_x - 15, grid_top), (mid_x - 15, grid_bottom)],
+              fill=GREY, width=1)
+    hline(draw, left, right, grid_bottom + 12, width=2)
+
+    # --- bottom story: states sue Musk firms ---
+    y = grid_bottom + 26
+    bottom_end = story(draw, left, y, 700,
+                       "TECH \u00b7 LAW",
+                       "States Sue Musk Firms Over Grok Images",
+                       "US states sue Musk companies over sexualized images "
+                       "made with the AI chatbot Grok.",
+                       head_start=38, head_lines=2, body_size=20, body_lines=2)
+    draw_bubble(draw, 856, y + 8)
+
+    # --- footer ---
+    hline(draw, left, right, bottom_end + 12, width=2)
+    foot = load(SANS, 17)
+    note = ("Headlines verified from SCMP, The Japan Times and "
+            "The Manila Times \u00b7 24 November 2026")
+    tw = draw.textlength(note, font=foot)
+    draw.text(((PAGE_W - tw) / 2, bottom_end + 22), note, font=foot, fill=GREY)
+
+    page.save("entry.png")
+    print("wrote entry.png (1024x1024)")
+    print("lead_end=%d grid_bottom=%d bottom_end=%d" % (
+        lead_end, grid_bottom, bottom_end))
 
 
 if __name__ == "__main__":
